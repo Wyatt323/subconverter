@@ -1,0 +1,20 @@
+services:
+  subconverter:
+    image: wyatt323/subconverter:latest
+    container_name: subconverter
+    restart: unless-stopped
+    ports:
+      - "${BIND_ADDRESS:-0.0.0.0}:${PORT:-25500}:25500"
+    environment:
+      TZ: Asia/Shanghai
+    volumes:
+      - ./data:/base
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
