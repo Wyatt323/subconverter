@@ -11,6 +11,42 @@
 #include "utils/stl_extra.h"
 #include "utils/urlencode.h"
 #include "webserver.h"
+#include "handler/webget.h"
+#include <mutex>
+
+namespace {
+// Count every handler: non-conversion endpoints may also be using the cache.
+std::mutex request_cache_mutex;
+size_t active_cache_requests = 0;
+bool cache_cleanup_pending = false;
+
+class RequestCacheGuard {
+public:
+    explicit RequestCacheGuard(const std::string &path) {
+        std::lock_guard<std::mutex> lock(request_cache_mutex);
+        ++active_cache_requests;
+        if (path == "/sub" || path == "/sub2clashr" ||
+            path == "/surge2clash" || path == "/getprofile")
+            cache_cleanup_pending = true;
+    }
+    ~RequestCacheGuard() noexcept {
+        std::lock_guard<std::mutex> lock(request_cache_mutex);
+        if (--active_cache_requests == 0 && cache_cleanup_pending) {
+            // Keep admission locked so a new request cannot race cleanup.
+            try {
+                flushCache();
+                cache_cleanup_pending = false;
+            } catch (...) {
+                // Cleanup must never turn a valid conversion into an error.
+                // Leave pending set so the next idle transition retries.
+            }
+        }
+    }
+    RequestCacheGuard(const RequestCacheGuard &) = delete;
+    RequestCacheGuard &operator=(const RequestCacheGuard &) = delete;
+};
+}
+
 
 static const char *request_header_blacklist[] = {"host", "accept", "accept-encoding"};
 
@@ -35,6 +71,7 @@ static httplib::Server::Handler makeHandler(const responseRoute &rr)
 {
     return [rr](const httplib::Request &request, httplib::Response &response)
     {
+        RequestCacheGuard cache_guard(request.path);
         Request req;
         Response resp;
         req.method = request.method;
